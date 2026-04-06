@@ -1,11 +1,13 @@
 #include <raylib.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "raymath.h"
 
-#define MAX_COLS 10
-#define MAX_ROWS 10
+#define MAX_COLS 26
+#define MAX_ROWS 15
+#define RADIUS 15
 
 typedef struct {
     Vector2 center;
@@ -14,16 +16,26 @@ typedef struct {
 
 Hex grid[MAX_COLS][MAX_ROWS];
 
-void InitHexGrid(int cols, int rows, float radius)
-{
-    float height = sqrtf(3.0f) * radius;
+Vector2 startHex = { -1, -1 };
+Vector2 finishHex = { -1, -1 };
 
-    for (int col = 0; col < cols; col++)
+typedef struct Node {
+    int col, row;
+    int gCost, hCost, fCost;
+    int parentCol, parentRow; // store parent as coordinates
+    bool inOpen;
+} Node;
+
+void InitHexGrid()
+{
+    const float height = sqrtf(3.0f) * RADIUS;
+
+    for (int col = 0; col < MAX_COLS; col++)
     {
-        for (int row = 0; row < rows; row++)
+        for (int row = 0; row < MAX_ROWS; row++)
         {
-            float x = col * (radius * 1.5f);
-            float y = row * height + (col % 2) * (height / 2.0f);
+            float x = (float)col * (RADIUS * 1.5f);
+            float y = (float)row * height + (float)(col % 2) * (height / 2.0f);
 
             grid[col][row].center = (Vector2){ x + 100, y + 100 };
             grid[col][row].selected = false;
@@ -31,37 +43,61 @@ void InitHexGrid(int cols, int rows, float radius)
     }
 }
 
-bool IsPointInHex(Vector2 p, Vector2 center, float radius)
+bool IsMouseInHexagon(const Vector2 center, const float radius)
 {
-    return Vector2Distance(p, center) < radius;
+    const Vector2 mouse = GetMousePosition();
+    return Vector2Distance(mouse, center) <= radius;
 }
 
-void HandleInput(int cols, int rows, float radius)
+void UpdateHexSelection()
 {
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
     {
-        Vector2 mouse = GetMousePosition();
-
-        for (int col = 0; col < cols; col++)
+        for (int col = 0; col < MAX_COLS; col++)
         {
-            for (int row = 0; row < rows; row++)
+            for (int row = 0; row < MAX_ROWS; row++)
             {
-                if (IsPointInHex(mouse, grid[col][row].center, radius))
+                Vector2 center = grid[col][row].center;
+                if (IsMouseInHexagon(center, RADIUS))
                 {
-                    grid[col][row].selected = !grid[col][row].selected;
+                    if (startHex.x < 0)
+                    {
+                        startHex = center;
+                        grid[col][row].selected = true;
+                    }
+                    else if (finishHex.x < 0)
+                    {
+                        finishHex = center;
+                        grid[col][row].selected = true;
+                    }
+                    return; // stop after selecting one
                 }
             }
         }
     }
 }
 
-void DrawHexagon(Vector2 center, float radius, Color color)
+void ResetHexSelection()
+{
+    startHex = (Vector2){ -1, -1 };
+    finishHex = (Vector2){ -1, -1 };
+
+    for (int col = 0; col < MAX_COLS; col++)
+    {
+        for (int row = 0; row < MAX_ROWS; row++)
+        {
+            grid[col][row].selected = false;
+        }
+    }
+}
+
+void DrawHexagon(const Vector2 center, const float radius, const bool selected)
 {
     Vector2 points[6];
 
     for (int i = 0; i < 6; i++)
     {
-        float angle = DEG2RAD * (60.0f * (float)i);
+        const float angle = DEG2RAD * (60.0f * (float)i);
         points[i] = (Vector2){
             center.x + cosf(angle) * radius,
             center.y + sinf(angle) * radius
@@ -70,25 +106,174 @@ void DrawHexagon(Vector2 center, float radius, Color color)
 
     for (int i = 0; i < 6; i++)
     {
-        Vector2 p1 = points[i];
-        Vector2 p2 = points[(i + 1) % 6];
+        const Vector2 p1 = points[i];
+        const Vector2 p2 = points[(i + 1) % 6];
 
-        DrawTriangle(center, p2, p1, color);
+        const Color color = selected ? RED : BLACK;
+        (selected) ? DrawTriangle(center, p2, p1, color) : DrawLineV(p1, p2, color);
     }
 }
 
-void DrawHexGrid(int cols, int rows, float radius)
+void DrawHexGrid()
 {
-    for (int col = 0; col < cols; col++)
+    for (int col = 0; col < MAX_COLS; col++)
     {
-        for (int row = 0; row < rows; row++)
+        for (int row = 0; row < MAX_ROWS; row++)
         {
-            Color color = grid[col][row].selected ? RED : BLACK;
+            const Vector2 center = grid[col][row].center;
+            bool selected = grid[col][row].selected;
 
-            DrawHexagon(grid[col][row].center, radius, color);
+            if (Vector2Equals(center, startHex)) selected = true;
+            if (Vector2Equals(center, finishHex)) selected = true;
+
+            DrawHexagon(center, RADIUS, selected);
         }
     }
 }
+
+typedef struct Cube {
+    int x, y, z;
+} Cube;
+
+Cube OffsetToCube(int col, int row)
+{
+    int x = col;
+    int z = row - (col / 2); // assuming even-q vertical layout
+    int y = -x - z;
+    return (Cube){x, y, z};
+}
+
+int CubeDistance(int col1, int row1, int col2, int row2)
+{
+    Cube a = OffsetToCube(col1, row1);
+    Cube b = OffsetToCube(col2, row2);
+    return (abs(a.x - b.x) + abs(a.y - b.y) + abs(a.z - b.z)) / 2;
+}
+
+void GetHexNeighbors(int col, int row, int* outCols, int* outRows, int* count)
+{
+    int even = col % 2;
+    int dirs[6][2] = {
+        {+1, 0}, {+1, even ? -1 : 0}, {0, -1},
+        {-1, even ? -1 : 0}, {-1, 0}, {0, +1}
+    };
+
+    *count = 0;
+    for (int i = 0; i < 6; i++)
+    {
+        int nc = col + dirs[i][0];
+        int nr = row + dirs[i][1];
+        if (nc >= 0 && nc < MAX_COLS && nr >= 0 && nr < MAX_ROWS)
+        {
+            outCols[*count] = nc;
+            outRows[*count] = nr;
+            (*count)++;
+        }
+    }
+}
+
+float Heuristic(const Vector2 a, const Vector2 b)
+{
+    return Vector2Distance(a, b);
+}
+
+void FindPath()
+{
+    if (startHex.x < 0 || finishHex.x < 0) return;
+
+    int startCol=-1, startRow=-1, finishCol=-1, finishRow=-1;
+    for (int col=0; col<MAX_COLS; col++)
+    {
+        for (int row=0; row<MAX_ROWS; row++)
+        {
+            if (Vector2Equals(grid[col][row].center, startHex)) { startCol=col; startRow=row; }
+            if (Vector2Equals(grid[col][row].center, finishHex)) { finishCol=col; finishRow=row; }
+        }
+    }
+
+    if (startCol<0 || finishCol<0) return;
+
+    Node nodes[MAX_COLS][MAX_ROWS] = {0};
+    bool closed[MAX_COLS][MAX_ROWS] = {0};
+
+    // Initialize nodes
+    for(int c=0;c<MAX_COLS;c++)
+    {
+        for(int r=0;r<MAX_ROWS;r++)
+        {
+            nodes[c][r].col = c;
+            nodes[c][r].row = r;
+            nodes[c][r].gCost = 9999;
+            nodes[c][r].hCost = CubeDistance(c,r,finishCol,finishRow);
+            nodes[c][r].fCost = 9999;
+            nodes[c][r].inOpen = false;
+            nodes[c][r].parentCol = -1;
+            nodes[c][r].parentRow = -1;
+        }
+    }
+
+    nodes[startCol][startRow].gCost = 0;
+    nodes[startCol][startRow].fCost = nodes[startCol][startRow].hCost;
+    nodes[startCol][startRow].inOpen = true;
+
+    bool pathFound = false;
+
+    while(true)
+    {
+        // Find node in open list with lowest fCost
+        Node* current = NULL;
+        for(int c=0;c<MAX_COLS;c++)
+        {
+            for(int r=0;r<MAX_ROWS;r++)
+            {
+                if(nodes[c][r].inOpen && (!current || nodes[c][r].fCost < current->fCost))
+                    current = &nodes[c][r];
+            }
+        }
+
+        if(!current) break; // no path
+
+        if(current->col == finishCol && current->row == finishRow)
+        {
+            pathFound = true;
+            break;
+        }
+
+        current->inOpen = false;
+        closed[current->col][current->row] = true;
+
+        int nCols[6], nRows[6], nCount;
+        GetHexNeighbors(current->col, current->row, nCols, nRows, &nCount);
+        for(int i=0;i<nCount;i++)
+        {
+            int nc = nCols[i], nr = nRows[i];
+            if(closed[nc][nr]) continue;
+
+            int gCostNew = current->gCost + 1; // neighbor cost = 1
+            if(gCostNew < nodes[nc][nr].gCost)
+            {
+                nodes[nc][nr].gCost = gCostNew;
+                nodes[nc][nr].fCost = gCostNew + nodes[nc][nr].hCost;
+                nodes[nc][nr].parentCol = current->col;
+                nodes[nc][nr].parentRow = current->row;
+                nodes[nc][nr].inOpen = true;
+            }
+        }
+    }
+
+    if(pathFound)
+    {
+        int c = finishCol, r = finishRow;
+        while(c != -1 && r != -1)
+        {
+            grid[c][r].selected = true;
+            int pc = nodes[c][r].parentCol;
+            int pr = nodes[c][r].parentRow;
+            c = pc; r = pr;
+        }
+    }
+}
+
 
 int main()
 {
@@ -98,16 +283,20 @@ int main()
     InitWindow(screenWidth, screenHeight, "GABHEXPATH");
     SetTargetFPS(60);
 
-    InitHexGrid(MAX_COLS, MAX_ROWS, 15.0f);
+    InitHexGrid();
 
     while (!WindowShouldClose()) 
     {
-        HandleInput(MAX_COLS, MAX_ROWS, 15.0f);
+        if (IsKeyPressed(KEY_R)) ResetHexSelection();
+
+        UpdateHexSelection();
 
         BeginDrawing();
         ClearBackground(GRAY);
 
-        DrawHexGrid(MAX_COLS, MAX_ROWS, 15.0f);
+        if (IsKeyPressed(KEY_SPACE)) FindPath();
+
+        DrawHexGrid();
 
         EndDrawing();
     }
