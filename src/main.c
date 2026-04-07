@@ -66,7 +66,7 @@ void UpdateHexSelection()
                 Vector2 center = hex->center;
                 if (IsMouseInHexagon(center, RADIUS))
                 {
-                    const bool hold = IsKeyDown(KEY_LEFT_SHIFT);
+                    const bool hold = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
 
                     if (startHex.x < 0 && !hold)
                     {
