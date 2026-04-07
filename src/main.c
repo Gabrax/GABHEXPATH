@@ -110,7 +110,7 @@ void DrawHexagon(const Vector2 center, const float radius, const bool selected)
         const Vector2 p2 = points[(i + 1) % 6];
 
         const Color color = selected ? RED : BLACK;
-        (selected) ? DrawTriangle(center, p2, p1, color) : DrawLineV(p1, p2, color);
+        (selected) ? DrawTriangle(center, p2, p1, color) : DrawLineV(p2, p1, color);
     }
 }
 
@@ -138,7 +138,7 @@ typedef struct Cube {
 Cube OffsetToCube(int col, int row)
 {
     int x = col;
-    int z = row - (col / 2); // assuming even-q vertical layout
+    int z = row - (col - (col & 1)) / 2;
     int y = -x - z;
     return (Cube){x, y, z};
 }
@@ -152,17 +152,25 @@ int CubeDistance(int col1, int row1, int col2, int row2)
 
 void GetHexNeighbors(int col, int row, int* outCols, int* outRows, int* count)
 {
-    int even = col % 2;
-    int dirs[6][2] = {
-        {+1, 0}, {+1, even ? -1 : 0}, {0, -1},
-        {-1, even ? -1 : 0}, {-1, 0}, {0, +1}
+    *count = 0;
+
+    const int dirs_even[6][2] = {
+        {+1, -1}, {0, -1}, {-1, -1},
+        {-1, 0}, {0, +1}, {+1, 0}
     };
 
-    *count = 0;
+    const int dirs_odd[6][2] = {
+        {+1, 0}, {0, -1}, {-1, 0},
+        {-1, +1}, {0, +1}, {+1, +1}
+    };
+
+    const int (*dirs)[2] = (col % 2 == 1) ? dirs_odd : dirs_even;
+
     for (int i = 0; i < 6; i++)
     {
         int nc = col + dirs[i][0];
         int nr = row + dirs[i][1];
+
         if (nc >= 0 && nc < MAX_COLS && nr >= 0 && nr < MAX_ROWS)
         {
             outCols[*count] = nc;
@@ -246,10 +254,11 @@ void FindPath()
         GetHexNeighbors(current->col, current->row, nCols, nRows, &nCount);
         for(int i=0;i<nCount;i++)
         {
-            int nc = nCols[i], nr = nRows[i];
+            const int nc = nCols[i];
+            const int nr = nRows[i];
             if(closed[nc][nr]) continue;
 
-            int gCostNew = current->gCost + 1; // neighbor cost = 1
+            const int gCostNew = current->gCost + 1; // neighbor cost = 1
             if(gCostNew < nodes[nc][nr].gCost)
             {
                 nodes[nc][nr].gCost = gCostNew;
@@ -263,13 +272,13 @@ void FindPath()
 
     if(pathFound)
     {
-        int c = finishCol, r = finishRow;
-        while(c != -1 && r != -1)
+        int col = finishCol, row = finishRow;
+        while(col != -1 && row != -1)
         {
-            grid[c][r].selected = true;
-            int pc = nodes[c][r].parentCol;
-            int pr = nodes[c][r].parentRow;
-            c = pc; r = pr;
+            grid[col][row].selected = true;
+            const int parentCol = nodes[col][row].parentCol;
+            const int parentRow = nodes[col][row].parentRow;
+            col = parentCol; row = parentRow;
         }
     }
 }
