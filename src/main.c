@@ -5,13 +5,16 @@
 
 #include "raymath.h"
 
-#define MAX_COLS 26
-#define MAX_ROWS 15
+#define MAX_COLS 27
+#define MAX_ROWS 16
 #define RADIUS 15
+
+typedef enum { BLOCKAGE, STARTSTOP, PATH, OTHER } Type;
 
 typedef struct {
     Vector2 center;
     bool selected;
+    Type type;
 } Hex;
 
 Hex grid[MAX_COLS][MAX_ROWS];
@@ -37,8 +40,10 @@ void InitHexGrid()
             float x = (float)col * (RADIUS * 1.5f);
             float y = (float)row * height + (float)(col % 2) * (height / 2.0f);
 
-            grid[col][row].center = (Vector2){ x + 100, y + 100 };
-            grid[col][row].selected = false;
+            Hex* hex = &grid[col][row];
+            hex->center = (Vector2){ x + 100, y + 100 };
+            hex->selected = false;
+            hex->type = OTHER;
         }
     }
 }
@@ -57,18 +62,28 @@ void UpdateHexSelection()
         {
             for (int row = 0; row < MAX_ROWS; row++)
             {
-                Vector2 center = grid[col][row].center;
+                Hex* hex = &grid[col][row];
+                Vector2 center = hex->center;
                 if (IsMouseInHexagon(center, RADIUS))
                 {
-                    if (startHex.x < 0)
+                    const bool hold = IsKeyDown(KEY_LEFT_SHIFT);
+
+                    if (startHex.x < 0 && !hold)
                     {
                         startHex = center;
-                        grid[col][row].selected = true;
+                        hex->selected = true;
+                        hex->type = STARTSTOP;
                     }
-                    else if (finishHex.x < 0)
+                    else if (finishHex.x < 0 && !hold)
                     {
                         finishHex = center;
-                        grid[col][row].selected = true;
+                        hex->selected = true;
+                        hex->type = STARTSTOP;
+                    }
+                    else if (hold)
+                    {
+                        hex->selected = true;
+                        hex->type = BLOCKAGE;
                     }
                     return; // stop after selecting one
                 }
@@ -87,11 +102,12 @@ void ResetHexSelection()
         for (int row = 0; row < MAX_ROWS; row++)
         {
             grid[col][row].selected = false;
+            grid[col][row].type = OTHER;
         }
     }
 }
 
-void DrawHexagon(const Vector2 center, const float radius, const bool selected)
+void DrawHexagon(const Vector2 center, const float radius, const bool selected, const Type type)
 {
     Vector2 points[6];
 
@@ -109,8 +125,13 @@ void DrawHexagon(const Vector2 center, const float radius, const bool selected)
         const Vector2 p1 = points[i];
         const Vector2 p2 = points[(i + 1) % 6];
 
-        const Color color = selected ? RED : BLACK;
-        (selected) ? DrawTriangle(center, p2, p1, color) : DrawLineV(p2, p1, color);
+        Color color = {0};
+        if (type == STARTSTOP) color = GREEN;
+        else if (type == BLOCKAGE) color = RED;
+        else if (type == PATH) color = BLUE;
+        else if (type == OTHER) color = BLACK;
+
+        selected ? DrawTriangle(center, p2, p1, color) : DrawLineV(p2, p1, color);
     }
 }
 
@@ -126,7 +147,7 @@ void DrawHexGrid()
             if (Vector2Equals(center, startHex)) selected = true;
             if (Vector2Equals(center, finishHex)) selected = true;
 
-            DrawHexagon(center, RADIUS, selected);
+            DrawHexagon(center, RADIUS, selected, grid[col][row].type);
         }
     }
 }
@@ -188,6 +209,7 @@ float Heuristic(const Vector2 a, const Vector2 b)
 void FindPath()
 {
     if (startHex.x < 0 || finishHex.x < 0) return;
+
 
     int startCol=-1, startRow=-1, finishCol=-1, finishRow=-1;
     for (int col=0; col<MAX_COLS; col++)
@@ -257,8 +279,10 @@ void FindPath()
             const int nc = nCols[i];
             const int nr = nRows[i];
             if(closed[nc][nr]) continue;
+            if (grid[nc][nr].type == BLOCKAGE) continue;
 
             const int gCostNew = current->gCost + 1; // neighbor cost = 1
+
             if(gCostNew < nodes[nc][nr].gCost)
             {
                 nodes[nc][nr].gCost = gCostNew;
@@ -276,13 +300,14 @@ void FindPath()
         while(col != -1 && row != -1)
         {
             grid[col][row].selected = true;
+            if (grid[col][row].type != STARTSTOP) grid[col][row].type = PATH;
+
             const int parentCol = nodes[col][row].parentCol;
             const int parentRow = nodes[col][row].parentRow;
             col = parentCol; row = parentRow;
         }
     }
 }
-
 
 int main()
 {
